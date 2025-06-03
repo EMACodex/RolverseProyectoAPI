@@ -13,9 +13,9 @@ const pgConnection = new Pool({
 // Probar conexión (opcional pero útil)
 pgConnection.connect((err, client, release) => {
   if (err) {
-    return console.error('Error al conectar con PostgreSQL:', err.stack);
+    return console.error('❌ Error al conectar con PostgreSQL:', err.stack);
   }
-  console.log('Conexión exitosa a PostgreSQL');
+  console.log('✅ Conexión exitosa a PostgreSQL');
   release();
 });
 
