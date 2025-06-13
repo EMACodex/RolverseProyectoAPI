@@ -9,7 +9,6 @@ const { sendEmail } = require('../nodemailer/nodemailer');
 router.post('/login', async (req, res) => {
     const { email, password } = req.body;
 
-
     if (!email || !password) {
         return res.status(400).json({ code: 400, message: 'Email and password are required' });
     }
@@ -28,9 +27,26 @@ router.post('/login', async (req, res) => {
         if (!isMatch) {
             return res.status(401).json({ code: 401, message: 'Invalid email or password' });
         }
+        
+        // Obtener roles del usuario
+        const rolesResult = await db.query(`
+        SELECT r.name 
+        FROM user_roles ur
+        JOIN roles r ON ur.role_id = r.id
+        WHERE ur.user_id = $1
+        `, [user.id]);
 
-        const token = jwt.sign({ id: user.id }, 'prueba', { expiresIn: '1h' });
+        const userRoles = rolesResult.rows.map(row => row.name);
 
+        // obtenemos el rol del usuario
+        const roleResult = await db.query(
+        'SELECT name FROM roles r JOIN user_roles ur ON ur.role_id = r.id WHERE ur.user_id = $1',
+        [user.id]
+        );
+
+        const role = roleResult.rows[0]?.name; // accedemos al nombre del rol directamente
+
+        const token = jwt.sign({ id: user.id, role: role }, 'prueba', { expiresIn: '1h' });
         
         res.json({ code: 200, message: 'Login successful', token });
     } catch (error) {
@@ -50,17 +66,45 @@ router.post('/register', async (req, res) => {
     }
 
     try {
-        // Verificar si el usuario ya existe
+        // 1. Verificar si el usuario ya existe
         const existingUser = await db.query('SELECT * FROM users WHERE email = $1', [email]);
         if (existingUser.rows.length > 0) {
             return res.status(409).json({ code: 409, message: 'El usuario ya existe' });
         }
 
-        // Hash de la contraseña
+        // 2. Hash de la contraseña
         const hashedPassword = await bcrypt.hash(password, 10);
 
-        // Insertar el nuevo usuario
-        await db.query('INSERT INTO users (name, email, password, creation_date) VALUES ($1, $2, $3, $4)', [name, email, hashedPassword, creation_date]);
+        // 3. Insertar el nuevo usuario y obtener su ID
+        const insertResult = await db.query(
+        'INSERT INTO users (name, email, password, creation_date) VALUES ($1, $2, $3, $4) RETURNING id',
+        [name, email, hashedPassword, creation_date]
+        );
+        const userId = insertResult.rows[0].id;
+
+        // 4. Obtener el ID del rol "user"
+        const roleResult = await db.query(
+        'SELECT id FROM roles WHERE name = $1',
+        ['user']
+        );
+        const roleId = await db.query('SELECT id FROM roles WHERE name = $1', ['user']);
+
+        if (!roleId) {
+        return res.status(500).json({ code: 500, message: 'El rol por defecto "user" no existe en la base de datos' });
+        }
+
+        // 5. Insertar en user_roles (asignar rol al usuario)
+        await db.query(
+        'INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2)',
+        [userId, roleId]
+        );
+
+        // 6. Enviar correo de bienvenida
+        // Asignar el rol de usuario por defecto (id = 2)
+        const userResult = await db.query('SELECT id FROM users WHERE email = $1', [email]);
+
+
+        await db.query('INSERT INTO user_roles (user_id, role_id) VALUES ($1, $2)', [userId, roleId.rows[0].id]);
 
         // Enviar correo de bienvenida
         const emailContent = {
@@ -90,7 +134,7 @@ router.post('/sendrecover', (req, res) => {
             }
 
             const token = jwt.sign({ id: idUsuario }, 'prueba', { expiresIn: '1h' });
-            const url = `http://localhost:4200/recover/${token}`;
+            const url = `http://localhost:4200/session/recover/${token}`;
 
             const emailContent = {
                 to: email,
